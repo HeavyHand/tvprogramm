@@ -245,15 +245,20 @@ function makeLiveSchedule(channel, date = new Date()) {
   const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0).getTime();
   const stop = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999).getTime();
   const group = channel.streamGroup ? ` · ${channel.streamGroup}` : '';
+  const liveStream = getEmbeddedStream(channel);
+  const desc = liveStream
+    ? `Live-расписание сформировано поисковым роботом из IPTV-каталога${group}.`
+    : 'Live-расписание сформировано поисковым роботом: классический EPG для этого канала пока недоступен.';
+
   return [{
     title: `Прямой эфир ${channel.name}`,
-    desc: `Live-расписание сформировано поисковым роботом из IPTV-каталога${group}.`,
-    genre: channel.streamGroup || 'Live TV',
+    desc,
+    genre: channel.streamGroup || (liveStream ? 'Live TV' : 'Робот'),
     start,
     stop,
     time: '00:00',
     duration: 24 * 60,
-    liveStream: getEmbeddedStream(channel),
+    liveStream,
   }];
 }
 
