@@ -7,6 +7,7 @@
 document.addEventListener('DOMContentLoaded', async () => {
   const { fetchSchedule, isLive, getProgress, getLiveIndex, getCurrentShow, toDateStr, fetchChannelCatalog } = window.EPG;
   const CHANNELS = window.CHANNELS;
+  const StreamBot = window.StreamBot;
   const CAT_LABELS = window.CAT_LABELS;
   const CAT_TAG = window.CAT_TAG;
 
@@ -25,6 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Schedule data store: { [channelId_dateStr]: items[] | 'loading' | 'error' }
   const scheduleStore = {};
+  const streamStore = {};
 
   const app = document.getElementById('app');
 
@@ -46,10 +48,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'widget':   app.appendChild(mkStatic('Виджет', widgetHTML())); break;
     }
     app.appendChild(mkFooter());
-    if (S.modal) app.appendChild(mkModal());
     bindAll();
     // Trigger EPG loads for visible channels
-    if (S.page === 'home') loadVisibleSchedules();
+    if (S.page === 'home') {
+      loadVisibleSchedules();
+      loadVisibleStreams();
+    }
     if (S.page === 'channel') loadChannelDetail();
   }
 
@@ -77,6 +81,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (added > 0) {
       console.info(`Loaded ${added} additional channels from epg.pw catalog`);
     }
+  }
+
+  async function hydrateStreamCatalog() {
+    if (!StreamBot?.buildChannelCatalog) return 0;
+    const streamChannels = await StreamBot.buildChannelCatalog(2500);
+    if (!streamChannels.length) return 0;
+
+    const knownNames = new Set(CHANNELS.map(c => normalizeName(c.name)));
+    const knownIds = new Set(CHANNELS.map(c => Number(c.id)));
+    let added = 0;
+
+    for (const ch of streamChannels) {
+      if (knownNames.has(normalizeName(ch.name))) continue;
+      while (knownIds.has(Number(ch.id))) ch.id += 1;
+      CHANNELS.push(ch);
+      knownNames.add(normalizeName(ch.name));
+      knownIds.add(Number(ch.id));
+      added++;
+    }
+
+    if (added > 0) {
+      console.info(`Search robot added ${added} IPTV channels to the catalog`);
+    }
+    return added;
   }
 
   // ===== HEADER =====
@@ -126,7 +154,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ===== HOME =====
   function mkHome() {
     const wrap = ce('div', 'page');
-    wrap.innerHTML = mkHeroHTML() + mkDateBarHTML() + mkFilterBarHTML();
+    wrap.innerHTML = mkHeroHTML() + mkDateBarHTML() + mkFilterBarHTML() + mkBotPanelHTML();
     const layout = ce('div', 'layout');
     layout.appendChild(mkSidebar());
     layout.appendChild(mkScheduleSection());
@@ -140,9 +168,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const rCount  = CHANNELS.filter(c => c.type === 'radio').length;
     return `
       <section class="hero">
-        <div class="hero-tag">📡 Реальное расписание в реальном времени</div>
+        <div class="hero-tag">🤖 Поисковой робот + актуальный эфир</div>
         <h1>TV-<span>CHECK</span><br>PROGRAMM</h1>
-        <p>Актуальное расписание ${tvCount}+ телеканалов и ${rCount}+ радиостанций. Данные обновляются автоматически.</p>
+        <p>Обширная программа передач ${tvCount}+ телеканалов и ${rCount}+ радиостанций: РФ, международные и нишевые каналы. Если канал сейчас в эфире, вместо картинки показываем живой плеер iptv.tatnet.app/embed.html.</p>
         <div class="hero-form" style="position:relative">
           <input type="text" id="heroSearch" placeholder="Первый канал, НТВ, Eurosport..." value="${esc(S.search)}" autocomplete="off">
           <div class="ac" id="heroAc"></div>
@@ -154,6 +182,34 @@ document.addEventListener('DOMContentLoaded', async () => {
           <div class="h-num"><div class="n">LIVE</div><div class="l">Данные EPG</div></div>
           <div class="h-num"><div class="n">7</div><div class="l">Дней вперёд</div></div>
         </div>
+      </section>`;
+  }
+
+  function mkBotPanelHTML() {
+    const sources = StreamBot?.sources || [];
+    const sourcesHTML = sources.slice(0, 3).map(src => `
+      <div class="bot-source">
+        <strong>${esc(src.label)}</strong>
+        <span>${esc(src.role)}</span>
+      </div>`).join('');
+
+    return `
+      <section class="bot-panel">
+        <div class="bot-card">
+          <div class="bot-ico">🔎</div>
+          <div>
+            <h2>Поисковой робот</h2>
+            <p>Собирает расширенный каталог РФ, международных и нишевых каналов из IPTV-источников, дополняет EPG и формирует live-расписание там, где классический EPG отсутствует.</p>
+          </div>
+        </div>
+        <div class="bot-card">
+          <div class="bot-ico">⚙️</div>
+          <div>
+            <h2>Workflow-бот</h2>
+            <p>Готов к GitHub Actions: cron проверяет источники, а сайт использует эти же правила выбора Zabava Project/LIVEM3U для актуального эфира.</p>
+          </div>
+        </div>
+        <div class="bot-sources">${sourcesHTML}</div>
       </section>`;
   }
 
@@ -291,6 +347,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let schedHTML = '';
     let nowHTML = '';
+    const streamHTML = mkStreamPreviewHTML(ch);
 
     if (!data || data === 'loading') {
       schedHTML = `<div class="loading-box"><div class="spinner"></div></div>`;
@@ -340,6 +397,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         </div>
         ${nowHTML}
       </div>
+      ${streamHTML}
       <div class="sch-list">${schedHTML}</div>
       <button class="more-btn" data-detail="${ch.id}">Полное расписание →</button>`;
     return card;
@@ -351,6 +409,112 @@ document.addEventListener('DOMContentLoaded', async () => {
       return `<img src="${logo}" alt="${esc(ch.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.innerHTML='<span style=&quot;font-size:10px;font-weight:800;color:${esc(ch.color)}&quot;>${esc(ch.abbr)}</span>'">`;
     }
     return `<span style="font-size:10px;font-weight:800;color:${ch.color}">${esc(ch.abbr)}</span>`;
+  }
+
+  function mkStreamPreviewHTML(ch, expanded = null) {
+    if (!StreamBot || ch.type === 'radio') return '';
+    const state = getStreamState(ch);
+    if (expanded === null) expanded = Boolean(state && state !== 'loading' && state !== 'error' && isSelectedDateToday());
+
+    if (!state) {
+      return `<div class="stream-preview compact">
+        <div><strong>Live-превью</strong><span>робот ещё ищет поток</span></div>
+        <button class="stream-btn" data-stream-find="${ch.id}">Найти эфир</button>
+      </div>`;
+    }
+
+    if (state === 'loading') {
+      return `<div class="stream-preview compact"><div class="mini-spinner"></div><div><strong>Поисковой робот</strong><span>проверяет источники IPTV…</span></div></div>`;
+    }
+
+    if (state === 'error') {
+      return `<div class="stream-preview compact muted"><div><strong>Live-превью</strong><span>поток не найден в открытых источниках</span></div><button class="stream-btn" data-stream-find="${ch.id}">Повторить</button></div>`;
+    }
+
+    const iframe = expanded ? `<div class="stream-frame"><iframe src="${esc(state.embedUrl)}" title="${esc(ch.name)} live" loading="lazy" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe></div>` : '';
+    return `<div class="stream-preview${expanded ? ' expanded' : ''}">
+      <div class="stream-top">
+        <div>
+          <strong>▶ Сейчас онлайн</strong>
+          <span>${esc(state.name)} · ${esc(state.sourceLabel)} · совпадение ${state.score}%</span>
+        </div>
+        <button class="stream-btn" data-stream-toggle="${ch.id}">${expanded ? 'Скрыть' : 'Превью'}</button>
+      </div>
+      ${iframe}
+    </div>`;
+  }
+
+  async function loadVisibleStreams() {
+    if (!StreamBot) return;
+    const channels = filteredChannels().slice(0, (S.offset + 1) * S.PER_PAGE).filter(ch => ch.type !== 'radio');
+    const toLoad = channels.filter(ch => !streamStore[ch.id] && !StreamBot.getEmbeddedStream?.(ch)).slice(0, 8);
+    toLoad.forEach(ch => { streamStore[ch.id] = 'loading'; patchCardSchedule(ch, toDateStr(S.date)); });
+
+    for (const ch of toLoad) {
+      const stream = await StreamBot.findStream(ch);
+      streamStore[ch.id] = stream || 'error';
+      patchCardSchedule(ch, toDateStr(S.date));
+    }
+  }
+
+  async function findStreamForChannel(chId) {
+    const ch = CHANNELS.find(c => c.id === chId);
+    if (!ch || !StreamBot) return;
+    const embedded = StreamBot.getEmbeddedStream?.(ch);
+    if (embedded) {
+      streamStore[ch.id] = embedded;
+      patchCardSchedule(ch, toDateStr(S.date));
+      if (S.page === 'channel') loadChannelDetail();
+      return;
+    }
+    streamStore[ch.id] = 'loading';
+    patchCardSchedule(ch, toDateStr(S.date));
+    const stream = await StreamBot.findStream(ch);
+    streamStore[ch.id] = stream || 'error';
+    patchCardSchedule(ch, toDateStr(S.date));
+    if (S.page === 'channel') loadChannelDetail();
+  }
+
+  function toggleStreamPreview(chId) {
+    const card = document.querySelector(`.ch-card[data-chid="${chId}"]`);
+    const preview = card?.querySelector('.stream-preview');
+    const ch = CHANNELS.find(c => c.id === chId);
+    const stream = ch ? getStreamState(ch) : streamStore[chId];
+    if (!preview || !ch || !stream || stream === 'loading' || stream === 'error') return;
+    const expanded = preview.classList.contains('expanded');
+    preview.outerHTML = mkStreamPreviewHTML(ch, !expanded);
+    bindStreamControls(card || document);
+  }
+
+  function bindStreamControls(root = document) {
+    root.querySelectorAll('[data-stream-find]').forEach(el => {
+      el.addEventListener('click', e => { e.stopPropagation(); findStreamForChannel(+el.dataset.streamFind); });
+    });
+    root.querySelectorAll('[data-stream-toggle]').forEach(el => {
+      el.addEventListener('click', e => { e.stopPropagation(); toggleStreamPreview(+el.dataset.streamToggle); });
+    });
+  }
+
+  function getStreamState(ch) {
+    return streamStore[ch.id] || StreamBot?.getEmbeddedStream?.(ch) || null;
+  }
+
+  async function fetchScheduleOrLive(ch, date) {
+    if (StreamBot?.isStreamChannel?.(ch)) {
+      const epgData = ch.epgId && !ch.isStreamCatalog ? await fetchSchedule(ch, date) : null;
+      if (Array.isArray(epgData) && epgData.length) return epgData;
+      return StreamBot.makeLiveSchedule(ch, date);
+    }
+
+    const epgData = await fetchSchedule(ch, date);
+    if ((epgData === null || (Array.isArray(epgData) && epgData.length === 0)) && StreamBot?.getEmbeddedStream?.(ch)) {
+      return StreamBot.makeLiveSchedule(ch, date);
+    }
+    return epgData;
+  }
+
+  function isSelectedDateToday() {
+    return S.date.toDateString() === new Date().toDateString();
   }
 
   // ===== SCHEDULE LOADING =====
@@ -368,7 +532,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const batch = toLoad.slice(i, i + BATCH);
       await Promise.all(batch.map(async ch => {
         const key = `${ch.id}_${dateStr}`;
-        const result = await fetchSchedule(ch, S.date);
+        const result = await fetchScheduleOrLive(ch, S.date);
         scheduleStore[key] = result === null ? 'error' : result;
         // Patch the card DOM directly without full re-render
         patchCardSchedule(ch, dateStr);
@@ -387,6 +551,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Re-bind events on patched card
     card.querySelectorAll('[data-modal]').forEach(el => el.addEventListener('click', () => openModal(ch.id)));
     card.querySelectorAll('[data-detail]').forEach(el => el.addEventListener('click', () => goDetail(ch.id)));
+    bindStreamControls(card);
   }
 
   // ===== CHANNEL DETAIL PAGE =====
@@ -416,7 +581,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       </div>
       ${mkDateBarHTML()}
       <div style="max-width:860px;margin:0 auto;padding:20px">
-        <div class="ch-card" id="detailCard">
+        <div class="ch-card" id="detailCard" data-chid="${ch.id}">
           <div class="loading-box" style="padding:40px"><div class="spinner"></div></div>
         </div>
       </div>`;
@@ -435,7 +600,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let data = scheduleStore[key];
     if (!data || data === 'loading') {
       scheduleStore[key] = 'loading';
-      data = await fetchSchedule(ch, S.date);
+      data = await fetchScheduleOrLive(ch, S.date);
       scheduleStore[key] = data === null ? 'error' : data;
       data = scheduleStore[key];
     }
@@ -470,7 +635,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         ${live ? `<div class="sch-badge">В ЭФИРЕ</div>` : ''}
       </div>`;
     }).join('');
-    card.innerHTML = `<div class="sch-list">${html}</div>`;
+    card.innerHTML = `${mkStreamPreviewHTML(ch, Boolean(streamStore[ch.id] && streamStore[ch.id] !== 'loading' && streamStore[ch.id] !== 'error'))}<div class="sch-list">${html}</div>`;
+    bindStreamControls(card);
 
     // Scroll to live
     setTimeout(() => {
@@ -899,6 +1065,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const loadMoreBtn = document.getElementById('loadMoreBtn');
     if (loadMoreBtn) loadMoreBtn.addEventListener('click', () => { S.offset++; render(); });
 
+    // Stream robot controls
+    bindStreamControls(document);
+
     // FAQ toggle
     document.querySelectorAll('.faq-q').forEach(el => {
       el.addEventListener('click', () => el.closest('.faq-item').classList.toggle('open'));
@@ -985,6 +1154,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     return url;
   }
 
+  function normalizeName(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/ё/g, 'е')
+      .replace(/[^a-zа-я0-9]+/g, ' ')
+      .split(/\s+/)
+      .filter(token => token && !['телеканал','канал','channel','tv','тв','hd','sd','online','live','russia','ru','rus','russian','fhd','utf','lq','hq'].includes(token))
+      .join(' ')
+      .trim();
+  }
+
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   // ===== CLOCK UPDATE =====
@@ -1004,4 +1184,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ===== BOOT =====
   render();
+  hydrateStreamCatalog()
+    .then(added => { if (added && S.page === 'home') render(); })
+    .catch(e => console.warn('Stream catalog hydration failed:', e.message));
 });
