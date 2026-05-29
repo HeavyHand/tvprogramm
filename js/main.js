@@ -499,17 +499,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     return streamStore[ch.id] || StreamBot?.getEmbeddedStream?.(ch) || null;
   }
 
+  function channelWithStream(ch, stream) {
+    if (!stream || stream === 'loading' || stream === 'error') return ch;
+    return {
+      ...ch,
+      streamUrl: stream.url,
+      streamName: stream.name || ch.name,
+      streamGroup: stream.group || ch.streamGroup || 'TV',
+      streamSourceId: stream.sourceId,
+      streamSourceLabel: stream.sourceLabel,
+      streamSourceRole: stream.sourceRole,
+      streamEmbedUrl: stream.embedUrl,
+    };
+  }
+
   async function fetchScheduleOrLive(ch, date) {
     if (StreamBot?.isStreamChannel?.(ch)) {
       const epgData = ch.epgId && !ch.isStreamCatalog ? await fetchSchedule(ch, date) : null;
       if (Array.isArray(epgData) && epgData.length) return epgData;
-      return StreamBot.makeLiveSchedule(ch, date);
+      return StreamBot.makeLiveSchedule(channelWithStream(ch, getStreamState(ch)), date);
     }
 
     const epgData = await fetchSchedule(ch, date);
-    if ((epgData === null || (Array.isArray(epgData) && epgData.length === 0)) && StreamBot?.getEmbeddedStream?.(ch)) {
-      return StreamBot.makeLiveSchedule(ch, date);
+    if (Array.isArray(epgData) && epgData.length) return epgData;
+
+    // Never leave a TV channel with a hard error/empty card: if the EPG provider
+    // has no programme data, the robot still creates a day-long live schedule.
+    if (ch.type === 'tv' && StreamBot?.makeLiveSchedule) {
+      return StreamBot.makeLiveSchedule(channelWithStream(ch, getStreamState(ch)), date);
     }
+
     return epgData;
   }
 
