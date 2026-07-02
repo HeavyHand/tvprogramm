@@ -347,7 +347,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let schedHTML = '';
     let nowHTML = '';
-    const streamHTML = mkStreamPreviewHTML(ch);
+    // Cards on the home grid never auto-expand the live player — otherwise every
+    // channel with a found stream starts playing at once. Users opt in via "Превью".
+    const streamHTML = mkStreamPreviewHTML(ch, false);
 
     if (!data || data === 'loading') {
       schedHTML = `<div class="loading-box"><div class="spinner"></div></div>`;
