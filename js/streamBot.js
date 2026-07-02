@@ -170,7 +170,10 @@ function rankMatches(channel, playlist) {
       if (exactAlias) score += 30;
       else if (containsAlias) score += 18;
       if (/\(\+\d+\)|\+\d+$/i.test(item.name)) score -= 18;
-      if (/\bhd\b/i.test(item.name)) score += 2;
+      // HD variants normalize to the same name as their SD counterpart (see
+      // normalize()), so without a real tie-breaker bonus the top pick is
+      // effectively random between e.g. "Матч ТВ" and "Матч ТВ HD".
+      if (/\bhd\b/i.test(item.name)) score += 8;
 
       return { item, score: Math.max(0, Math.min(100, Math.round(score))) };
     })
